@@ -43,6 +43,8 @@ class MyRobotSlam(RobotAbstract):
 
         self.tiny_slam = TinySlam(self.occupancy_grid)
         self.planner = Planner(self.occupancy_grid)
+        self.is_turning = 0
+        self.odo_before_turning = None
 
         # storage for pose after localization
         self.corrected_pose = np.array([0, 0, 0])
@@ -61,7 +63,19 @@ class MyRobotSlam(RobotAbstract):
         self.tiny_slam.compute()
 
         # Compute new command speed to perform obstacle avoidance
-        command = reactive_obst_avoid(self.lidar())
+        if not self.is_turning:
+            command, turning = reactive_obst_avoid(self.lidar())
+            self.is_turning = turning
+            self.odo_before_turning = self.odometer_values()
+        else:
+            turning_factor = 0.2
+            command = {"forward": 0,
+               "rotation": self.is_turning * turning_factor}
+
+            if np.abs((self.odometer_values()[2] - self.odo_before_turning[2] + np.pi) % (2 * np.pi) - np.pi) > np.pi / 4:
+                self.is_turning = 0
+                
+        
         return command
 
     def control_tp2(self):
