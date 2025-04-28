@@ -53,7 +53,7 @@ class MyRobotSlam(RobotAbstract):
         """
         Main control function executed at each time step
         """
-        return self.control_tp1()
+        return self.control_tp2()
 
     def control_tp1(self):
         """
@@ -83,10 +83,44 @@ class MyRobotSlam(RobotAbstract):
         Control function for TP2
         Main control function with full SLAM, random exploration and path planning
         """
-        pose = self.odometer_values()
-        goal = [0,0,0]
+        goal = [-300,-400,0]
+        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        # print("corrected pose", corrected_pose)
+        # score = self.tiny_slam._score(self.lidar(), corrected_pose)
+        # print("before update score", score)
+        for _ in range(10):
+            self.tiny_slam.update_map(self.lidar(), corrected_pose)
+        
+        # score = self.tiny_slam._score(self.lidar(), corrected_pose)
+        
+        self.tiny_slam.localise(self.lidar(), self.tiny_slam.odom_pose_ref)
+        # print("after update score", score)
+        
+        if self.counter % 10 == 0:
+            self.tiny_slam.grid.display_cv(corrected_pose)
+        self.counter += 1
+
+        # return {
+        #     "forward": 0.0,
+        #     "rotation": 0.0
+        # }
 
         # Compute new command speed to perform obstacle avoidance
-        command = potential_field_control(self.lidar(), pose, goal)
+        command = potential_field_control(self.lidar(), corrected_pose, goal, self.tiny_slam.grid)
 
         return command
+
+    def control_tp3(self):
+        # self.map_pose = self.occupancy_grid.conv_world_to_map(self.odometer_values()[0], self.odometer_values()[1])
+        odom_pose_ref = None
+        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values(), odom_pose_ref)
+        self.tiny_slam.update_map(self.lidar(), corrected_pose)
+        
+        if self.counter % 100 == 0:
+            self.tiny_slam.grid.display_cv(corrected_pose)
+        self.counter += 1
+        
+        return {
+            "forward": 0.0,
+            "rotation": 0.0
+        }
