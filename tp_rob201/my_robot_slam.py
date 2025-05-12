@@ -35,6 +35,7 @@ class MyRobotSlam(RobotAbstract):
         # robot's starting position and the maximum map size that we shouldn't know.
         size_area = (1400, 1000)
         robot_position = (439.0, 195)
+        self.original_pose = np.array([robot_position[0], robot_position[1], 0])
         self.occupancy_grid = OccupancyGrid(x_min=-(size_area[0] / 2 + robot_position[0]),
                                             x_max=size_area[0] / 2 - robot_position[0],
                                             y_min=-(size_area[1] / 2 + robot_position[1]),
@@ -84,21 +85,55 @@ class MyRobotSlam(RobotAbstract):
         Main control function with full SLAM, random exploration and path planning
         """
         goal = [-300,-400,0]
-        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        # print("corrected pose", corrected_pose)
+        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        corrected_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
+        print("odometer pose", self.odometer_values())
+        print("reference pose", self.tiny_slam.odom_pose_ref)
+        # print("corrected pose", corrected_pose, _corrected_pose)
         # score = self.tiny_slam._score(self.lidar(), corrected_pose)
         # print("before update score", score)
-        for _ in range(10):
+        for _ in range(1):
             self.tiny_slam.update_map(self.lidar(), corrected_pose)
         
         # score = self.tiny_slam._score(self.lidar(), corrected_pose)
         
-        self.tiny_slam.localise(self.lidar(), self.tiny_slam.odom_pose_ref)
+        # self.tiny_slam.localise(self.lidar(), corrected_pose)
+        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
         # print("after update score", score)
         
         if self.counter % 10 == 0:
             self.tiny_slam.grid.display_cv(corrected_pose)
         self.counter += 1
+
+        if self.counter < 56:
+            return {
+                "forward": 0.0,
+                "rotation": 0.5
+            }
+        elif self.counter < 185:
+            return {
+                "forward": 0.4,
+                "rotation": 0.0
+            }
+        # elif self.counter < 200:
+        #     return {
+        #         "forward": 0.0,
+        #         "rotation": -0.5
+        #     }
+        # elif self.counter < 300:
+        #     return {
+        #         "forward": 0.5,
+        #         "rotation": 0.0
+        #     }
+        else:
+            goal = (-200, 100)
+            map_pose = self.occupancy_grid.conv_world_to_map(corrected_pose[0], corrected_pose[1])
+            goal_map = self.occupancy_grid.conv_world_to_map(goal[0], goal[1])
+            self.tiny_slam.plan(map_pose, goal_map, corrected_pose, goal)
+            return {
+                "forward": 0.0,
+                "rotation": 0
+            }
 
         # return {
         #     "forward": 0.0,
