@@ -114,7 +114,12 @@ def potential_field_control(lidar: Lidar, current_pose, goal_pose, grid):
     goal_factor = 2e4
     res_vec = np.zeros(2)
     for vec in obstacles_vectors:
-        res_vec -= obstacles_factor * (vec - vec_rob) / np.linalg.norm(vec - vec_rob)**2
+        too_close = 1
+        if np.linalg.norm(vec - vec_rob) < 50:
+            too_close = 10
+        if np.linalg.norm(vec - vec_rob) < 20:
+            too_close = 100
+        res_vec -= too_close * obstacles_factor * (vec - vec_rob) / np.linalg.norm(vec - vec_rob)**2.5
 
     res_vec += goal_factor * (vec_goal - vec_rob) / np.linalg.norm(vec_goal - vec_rob)**2
 
@@ -146,7 +151,7 @@ def potential_field_control(lidar: Lidar, current_pose, goal_pose, grid):
 
     # Threshold in degrees
     threshold = 20
-    max_speed = 1.0
+    max_speed = .5
     norm_res_vec = np.linalg.norm(res_vec)
     dist_to_goal = np.linalg.norm(vec_goal - vec_rob)
     if dist_to_goal < 10:

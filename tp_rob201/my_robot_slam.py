@@ -13,7 +13,7 @@ from tiny_slam import TinySlam
 from control import potential_field_control, reactive_obst_avoid
 from occupancy_grid import OccupancyGrid
 from planner import Planner
-
+import cv2
 
 # Definition of our robot controller
 class MyRobotSlam(RobotAbstract):
@@ -36,6 +36,7 @@ class MyRobotSlam(RobotAbstract):
         size_area = (1400, 1000)
         robot_position = (439.0, 195)
         self.original_pose = np.array([robot_position[0], robot_position[1], 0])
+        self._original_pose = np.array([robot_position[0], robot_position[1], 0])
         self.occupancy_grid = OccupancyGrid(x_min=-(size_area[0] / 2 + robot_position[0]),
                                             x_max=size_area[0] / 2 - robot_position[0],
                                             y_min=-(size_area[1] / 2 + robot_position[1]),
@@ -49,6 +50,17 @@ class MyRobotSlam(RobotAbstract):
         self.idle = 0
         self.stopped = 0
         self.goal_count = 0
+        self.score_threshold = 11e3
+        self.pathx = []
+        self.pathy = []
+        self.starting_coord = np.array([0, 0])
+
+        self.goals_list = [
+            [-200,-400,0],
+            [-220,-260,0],
+            [-500,-260,0],
+            [-500, 0,0],
+        ]
 
 
         # storage for pose after localization
@@ -89,20 +101,24 @@ class MyRobotSlam(RobotAbstract):
         Main control function with full SLAM, random exploration and path planning
         """
         
-        if self.stopped:
-            return {"forward": 0.0, "rotation": 0.0}
         self.counter += 1
-        goals_list = [
-            [-220,-400,0],
-            [-220,-260,0],
-            [-500,-260,0],
-            [-500, 0,0],
-        ]
-
-        goal = goals_list[self.goal_count]
         corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        true_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
+        true_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self._original_pose
         
+        print(self.counter)
+        if self.stopped:
+            self.goals_list = []
+            for i in range(0, len(self.pathx), 30):
+                self.goals_list.append((self.pathx[i], self.pathy[i]))
+            self.goals_list.append(self.starting_coord)
+            self.goal_count = 0
+            self.stopped = 0
+            self.counter = 0
+            self.starting_coord = (corrected_pose[0], corrected_pose[1])
+            self.original_pose = np.array((corrected_pose[0], corrected_pose[1], corrected_pose[2]))
+            return {"forward": 0.0, "rotation": 0.0}
+
+        goal = self.goals_list[self.goal_count]
         if self.counter < 50:
             self.tiny_slam.update_map(self.lidar(), corrected_pose)
             self.tiny_slam.grid.display_cv(corrected_pose, goal=goal)
@@ -120,9 +136,14 @@ class MyRobotSlam(RobotAbstract):
         print("true pose", true_pose)
         print("score", score)
 
-        if score > 9e3:
+        if self.idle > 100:
+            self.score_threshold *= 0.95
+        actual_threshold = max(9e3, self.score_threshold * (1 + self.counter / 7000))
+        print("actual threshold", actual_threshold)
+        if score > actual_threshold:
             self.tiny_slam.update_map(self.lidar(), corrected_pose)
-        if score < 9e3:
+            self.idle = 0
+        if score < actual_threshold:
             self.idle += 1
             return {"forward": 0.0, "rotation": 0.0}
         
@@ -132,17 +153,22 @@ class MyRobotSlam(RobotAbstract):
         if command == {"forward": 0.0, "rotation": 0.0}:
             print(self.counter, self.idle)
             self.goal_count += 1
-        if self.goal_count >= len(goals_list):
+        if self.goal_count >= len(self.goals_list):
+            self.tiny_slam.grid.display_cv(corrected_pose, self.starting_coord)
             map_pose = self.occupancy_grid.conv_world_to_map(corrected_pose[0], corrected_pose[1])
-            original_pose = self.occupancy_grid.conv_world_to_map(0, 0)
+            original_pose = self.occupancy_grid.conv_world_to_map(
+                self.starting_coord[0], self.starting_coord[1]
+            )
             path = self.planner.plan(map_pose, original_pose)
-            pathx = []
-            pathy = []
+            self.pathx = []
+            self.pathy = []
             for i in range(len(path)):
-                pathx.append(path[i][0])
-                pathy.append(path[i][1])
-            self.tiny_slam.grid.display_cv(corrected_pose, (0, 0), np.array((pathx, pathy)))
+                self.pathx.append(path[i][0])
+                self.pathy.append(path[i][1])
+            for _ in range(100): # only for video purpose
+                self.tiny_slam.grid.display_cv(corrected_pose, self.starting_coord, np.array((self.pathx, self.pathy)))
             self.stopped = 1
+            self.counter = 0
             print("stopped")
             # command = {"forward": 0.0, "rotation": 0.0}
         # self.stopped = 1

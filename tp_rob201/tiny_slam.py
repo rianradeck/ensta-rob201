@@ -14,8 +14,8 @@ class TinySlam:
         # Origin of the odom frame in the map frame
         self.odom_pose_ref = np.array([0, 0, 0])
 
-    def get_obstacles(self, lidar: Lidar, pose):
-        indexes = np.where(lidar.get_ray_angles() < lidar.max_range)
+    def get_obstacles(self, lidar: Lidar, pose, world_coords=False):
+        indexes = np.where(lidar.get_sensor_values() < lidar.max_range)
         angles = lidar.get_ray_angles()[indexes]
         ranges = lidar.get_sensor_values()[indexes]
         obstacles = self.polar_to_cartesian(
@@ -27,6 +27,8 @@ class TinySlam:
             np.clip(obstacles[0], self.grid.x_min_world, self.grid.x_max_world),
             np.clip(obstacles[1], self.grid.y_min_world, self.grid.y_max_world)
         )
+        if world_coords:
+            return obstacles
         
         map_coords = self.grid.conv_world_to_map(obstacles[0], obstacles[1])
         map_coords = (
@@ -83,7 +85,7 @@ class TinySlam:
         original_ref = self.odom_pose_ref.copy()
         xy_var = 0.15
         xy_size = 300
-        t_var = 0.01
+        t_var = 0.012
         t_size = 200
         
         for dt in np.random.normal(0, t_var, t_size):
@@ -100,20 +102,11 @@ class TinySlam:
         # print("Best angle", self.odom_pose_ref[2])
         # print("Corrected pose (angle adjusted)", self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref))
         
-        for dx in np.random.normal(0, xy_var, xy_size):
+        dx_list = np.random.normal(0, xy_var, xy_size)
+        dy_list = np.random.normal(0, xy_var, xy_size)
+        for dx, dy in zip(dx_list, dy_list):
             pose_ref = np.array([
                 self.odom_pose_ref[0] + dx,
-                self.odom_pose_ref[1],
-                self.odom_pose_ref[2]
-            ])
-            new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
-            score = self._score(lidar, new_corrected_pose)
-            if score > best_score:
-                best_score = score
-                self.odom_pose_ref = pose_ref
-        for dy in np.random.normal(0, xy_var, xy_size):
-            pose_ref = np.array([
-                self.odom_pose_ref[0],
                 self.odom_pose_ref[1] + dy,
                 self.odom_pose_ref[2]
             ])
@@ -122,6 +115,7 @@ class TinySlam:
             if score > best_score:
                 best_score = score
                 self.odom_pose_ref = pose_ref
+        
         # print("Best score", best_score)
         # print("Best pose ref", self.odom_pose_ref)
         # new_corrected_pose = self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref)
@@ -130,6 +124,9 @@ class TinySlam:
             self.odom_pose_ref = original_ref
 
     def polar_to_cartesian(self, ranges, angles, pose):
+        #filter position where ranges > lidar.max_range
+        indexes = np.where(ranges < self.grid.x_max_map)
+
         return np.array([pose[0] + ranges * np.cos(angles + pose[2]),
                          pose[1] + ranges * np.sin(angles + pose[2])])
 
@@ -139,18 +136,17 @@ class TinySlam:
         lidar : placebot object with lidar data
         pose : [x, y, theta] nparray, corrected pose in world coordinates
         """
-        obstacles = self.polar_to_cartesian(
-            lidar.get_sensor_values(), 
-            lidar.get_ray_angles(), 
-            pose
-        )
+        obstacles = self.get_obstacles(lidar, pose, True)
         
         thickness = 3
-        jitter = 1
+        jitter = 1.2
         
         for obstacle_x, obstacle_y in zip(obstacles[0], obstacles[1]):
             self.grid.add_value_along_line(pose[0], pose[1], obstacle_x, obstacle_y, -1)
-            
+            obs_dist = np.sqrt((obstacle_x - pose[0]) ** 2 + (obstacle_y - pose[1]) ** 2)
+            if obs_dist > lidar.max_range - 50:
+                continue
+
             for dx in np.arange(-jitter, jitter, 1):
                 for dy in np.arange(-jitter, jitter, 1):
                     u_pose_obs_vec = obstacle_x + dx - pose[0], obstacle_y + dy - pose[1]
@@ -160,10 +156,9 @@ class TinySlam:
                     segment_start_y = obstacle_y + dy - u_pose_obs_vec[1] * thickness
                     segment_end_x = obstacle_x + dx + u_pose_obs_vec[0] * thickness
                     segment_end_y = obstacle_y + dy + u_pose_obs_vec[1] * thickness
-                    
+
                     self.grid.add_value_along_line(segment_start_x, segment_start_y, segment_end_x, segment_end_y, 1)
-                    
-        self.grid.add_map_points(obstacles[0], obstacles[1], 2)
+        
         self.grid.occupancy_map = np.clip(self.grid.occupancy_map, -40, 40)
     
     def compute(self):
