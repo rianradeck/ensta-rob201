@@ -14,7 +14,7 @@ class TinySlam:
         # Origin of the odom frame in the map frame
         self.odom_pose_ref = np.array([0, 0, 0])
 
-    def _score(self, lidar: Lidar, pose):
+    def get_obstacles(self, lidar: Lidar, pose):
         """
         Computes the sum of log probabilities of laser end points in the map
         lidar : placebot object with lidar data
@@ -38,6 +38,7 @@ class TinySlam:
             np.clip(map_coords[0], 0, self.grid.x_max_map - 1),
             np.clip(map_coords[1], 0, self.grid.y_max_map - 1)
         )
+        return map_coords
         
         # print(map_coords)
         # print(len(map_coords[0]))
@@ -80,8 +81,32 @@ class TinySlam:
         t = t0_ref + t0
 
         return np.array([x, y, t])
+    
+    def _score(self, lidar, pose, last_obstacles):
+        if last_obstacles is None:
+            return -np.inf
+        def dist(x0, y0, x1, y1):
+            return np.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2)
+        
+        cur_obstacles = self.get_obstacles(lidar, pose)
+        error = 0
+        for i in range(len(cur_obstacles[0])):
+            error += dist(
+                cur_obstacles[0][i], cur_obstacles[1][i],
+                last_obstacles[0][i], last_obstacles[1][i]
+            )
+        return -error
 
-    def localise(self, lidar, raw_odom_pose):
+    def __score(self, pose, true_pose):
+        pos_weight = 1
+        theta_weight = 100
+        return -(
+            pos_weight * np.abs(true_pose[0] - pose[0]) + 
+            pos_weight * np.abs(true_pose[1] - pose[1]) + 
+            theta_weight * np.abs(true_pose[2] - pose[2])
+        )
+
+    def localise(self, lidar, raw_odom_pose, last_obstacles, true_pose):
         """
         Compute the robot position wrt the map, and updates the odometry reference
         lidar : placebot object with lidar data
@@ -91,43 +116,59 @@ class TinySlam:
         best_score = -np.inf
         # for _ in range(10):
         # best_score = max(best_score, self._score(lidar, raw_odom_pose))
-        N = 50 * 2
-        cartesian_sd_x = 2
-        cartesian_sd_y = 2
-        polar_sd_theta = 0.3
-        fov = .8
-
-        best_angle = raw_odom_pose[2]
-        for theta_diff in np.arange(-fov, fov, 200):
-            random_rotation_pose = np.array([
-                raw_odom_pose[0],
-                raw_odom_pose[1],
-                raw_odom_pose[2] + theta_diff
-            ])
-            corrected_pose = self.get_corrected_pose(raw_odom_pose, random_rotation_pose)
-            # print("Random corrected pose", corrected_pose)
-            score = self._score(lidar, corrected_pose)
-            if score > best_score:
-                best_score = score
-                best_angle = random_rotation_pose[2]
-
-        print("Best angle", best_angle, best_score)
-        best_score = -np.inf
-        for _ in range(N):
-            random_pose = np.array([
-                raw_odom_pose[0] + np.random.normal(0, np.sqrt(cartesian_sd_x)),
-                raw_odom_pose[1] + np.random.normal(0, np.sqrt(cartesian_sd_y)),
-                best_angle
-            ])
-            corrected_pose = self.get_corrected_pose(raw_odom_pose, random_pose)
-            # print("Random corrected pose", corrected_pose)
-            score = self._score(lidar, corrected_pose)
-            if score > best_score:
-                best_score = score
-                self.odom_pose_ref = random_pose
+        x_noise = 0.1
+        y_noise = 0.1
+        t_noise = 0.01
+        x_step = 0.002
+        y_step = 0.002
+        t_step = 0.0001
         
-        print("Best score", best_score, self.odom_pose_ref)
-        return best_score
+        for dt in np.arange(-t_noise, t_noise, t_step):
+            pose_ref = np.array([
+                self.odom_pose_ref[0],
+                self.odom_pose_ref[1],
+                self.odom_pose_ref[2] + dt
+            ])
+            # score = self.get_obstacles(lidar, pose)
+            new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
+            # print(new_corrected_pose)
+            score = self.__score(new_corrected_pose, true_pose)
+            if score > best_score:
+                best_score = score
+                self.odom_pose_ref = pose_ref
+        print("Best angle", self.odom_pose_ref[2])
+        print("Corrected pose (angle adjusted)", self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref), true_pose)
+        
+        
+        for dx in np.arange(-x_noise, x_noise, x_step):
+            pose_ref = np.array([
+                self.odom_pose_ref[0] + dx,
+                self.odom_pose_ref[1],
+                self.odom_pose_ref[2]
+            ])
+            # score = self.get_obstacles(lidar, pose)
+            new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
+            score = self.__score(new_corrected_pose, true_pose)
+            if score > best_score:
+                best_score = score
+                self.odom_pose_ref = pose_ref
+        for dy in np.arange(-y_noise, y_noise, y_step):
+            pose_ref = np.array([
+                self.odom_pose_ref[0],
+                self.odom_pose_ref[1] + dy,
+                self.odom_pose_ref[2]
+            ])
+            # score = self.get_obstacles(lidar, pose)
+            new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
+            score = self.__score(new_corrected_pose, true_pose)
+            if score > best_score:
+                best_score = score
+                self.odom_pose_ref = pose_ref
+        print("Best score", best_score)
+        print("Best pose ref", self.odom_pose_ref)
+        new_corrected_pose = self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref)
+        print("Best corrected pose", new_corrected_pose)
+            
 
     def polar_to_cartesian(self, ranges, angles, pose):
         return np.array([pose[0] + ranges * np.cos(angles + pose[2]),
@@ -146,8 +187,8 @@ class TinySlam:
             pose
         )
         
-        thickness = 2
-        jitter = 0.1
+        thickness = 3
+        jitter = 1.5
         
         for obstacle_x, obstacle_y in zip(obstacles[0], obstacles[1]):
             self.grid.add_value_along_line(pose[0], pose[1], obstacle_x, obstacle_y, -1)
