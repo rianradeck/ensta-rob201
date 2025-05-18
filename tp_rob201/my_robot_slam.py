@@ -46,7 +46,10 @@ class MyRobotSlam(RobotAbstract):
         self.planner = Planner(self.occupancy_grid)
         self.is_turning = 0
         self.odo_before_turning = None
-        self.last_obstacles = None
+        self.idle = 0
+        self.stopped = 0
+        self.goal_count = 0
+
 
         # storage for pose after localization
         self.corrected_pose = np.array([0, 0, 0])
@@ -85,32 +88,65 @@ class MyRobotSlam(RobotAbstract):
         Control function for TP2
         Main control function with full SLAM, random exploration and path planning
         """
-        goal = [-300,-400,0]
-        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        corrected_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
-        # print("odometer pose", self.odometer_values())
-        # print("reference pose", self.tiny_slam.odom_pose_ref)
-        # print("corrected pose", corrected_pose, _corrected_pose)
-        # score = self.tiny_slam._score(self.lidar(), corrected_pose)
-        # print("before update score", score)
-        for _ in range(1):
+        
+        if self.stopped:
+            return {"forward": 0.0, "rotation": 0.0}
+        self.counter += 1
+        goals_list = [
+            [-220,-400,0],
+            [-220,-260,0],
+            [-500,-260,0],
+            [-500, 0,0],
+        ]
+
+        goal = goals_list[self.goal_count]
+        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        true_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
+        
+        if self.counter < 50:
             self.tiny_slam.update_map(self.lidar(), corrected_pose)
+            self.tiny_slam.grid.display_cv(corrected_pose, goal=goal)
+            return { "forward": 0.0, "rotation": 0.0 }
         
-        # score = self.tiny_slam._score(self.lidar(), corrected_pose)
-        
-        # self.tiny_slam.localise(self.lidar(), self.odometer_values(), self.last_obstacles, _corrected_pose)
-        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        # print("pose after localise", corrected_pose, _corrected_pose)
-        
-        # self.last_obstacles = self.tiny_slam.get_obstacles(self.lidar(), corrected_pose)
-        # print("after update score", score)
-        
-        # if self.counter % 10 == 0:
-        #     self.tiny_slam.grid.display_cv(corrected_pose, goal=goal)
-        # self.counter += 1
+        self.tiny_slam.localise(self.lidar(), self.odometer_values())
+        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        score = self.tiny_slam._score(self.lidar(), corrected_pose)
 
+        if self.counter % 10 == 0:
+            self.tiny_slam.grid.display_cv(corrected_pose, goal=goal)
+        self.counter += 1
+        
+        print("corrected pose", corrected_pose)
+        print("true pose", true_pose)
+        print("score", score)
+
+        if score > 9e3:
+            self.tiny_slam.update_map(self.lidar(), corrected_pose)
+        if score < 9e3:
+            self.idle += 1
+            return {"forward": 0.0, "rotation": 0.0}
+        
         command = potential_field_control(self.lidar(), corrected_pose, goal, self.tiny_slam.grid)
+        
 
+        if command == {"forward": 0.0, "rotation": 0.0}:
+            print(self.counter, self.idle)
+            self.goal_count += 1
+        if self.goal_count >= len(goals_list):
+            map_pose = self.occupancy_grid.conv_world_to_map(corrected_pose[0], corrected_pose[1])
+            original_pose = self.occupancy_grid.conv_world_to_map(0, 0)
+            path = self.planner.plan(map_pose, original_pose)
+            pathx = []
+            pathy = []
+            for i in range(len(path)):
+                pathx.append(path[i][0])
+                pathy.append(path[i][1])
+            self.tiny_slam.grid.display_cv(corrected_pose, (0, 0), np.array((pathx, pathy)))
+            self.stopped = 1
+            print("stopped")
+            # command = {"forward": 0.0, "rotation": 0.0}
+        # self.stopped = 1
+            
         return command
 
     def control_tp3(self):

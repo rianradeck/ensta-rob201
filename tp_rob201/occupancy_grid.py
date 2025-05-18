@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 from matplotlib import pyplot as plt
 
-VIDEO_OUT = False
+VIDEO_OUT = True
 
 
 class OccupancyGrid:
@@ -159,7 +159,7 @@ class OccupancyGrid:
         # plt.show()
         plt.pause(0.001)
 
-    def display_cv(self, robot_pose, goal=None, traj=None, vectors=None):
+    def display_cv(self, robot_pose, goal=None, traj=None, vectors=[]):
         """
         Screen display of map and robot pose,
         using opencv (faster than the matplotlib version)

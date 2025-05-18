@@ -15,11 +15,6 @@ class TinySlam:
         self.odom_pose_ref = np.array([0, 0, 0])
 
     def get_obstacles(self, lidar: Lidar, pose):
-        """
-        Computes the sum of log probabilities of laser end points in the map
-        lidar : placebot object with lidar data
-        pose : [x, y, theta] nparray, position of the robot to evaluate, in world coordinates
-        """
         indexes = np.where(lidar.get_ray_angles() < lidar.max_range)
         angles = lidar.get_ray_angles()[indexes]
         ranges = lidar.get_sensor_values()[indexes]
@@ -40,25 +35,6 @@ class TinySlam:
         )
         return map_coords
         
-        # print(map_coords)
-        # print(len(map_coords[0]))
-        # print("Five first detected obstacles", map_coords[0][:5], map_coords[1][:5])
-        # print("Total detected obstacles", len(map_coords[0]))
-        
-        # print("Five first map obstacles", np.where(self.grid.occupancy_map > 0)[0][:5], np.where(self.grid.occupancy_map > 0)[1][:5])
-        # print("Total map obstacles", len(np.where(self.grid.occupancy_map > 0)[0]))
-        # print(self.grid.occupancy_map[np.where(self.grid.occupancy_map > 0)[0], np.where(self.grid.occupancy_map > 0)[1]])
-
-        # map_coords == self.grid.occupancy_map
-        # try::
-        # score = np.sum(np.clip(self.grid.occupancy_map[map_coords[0], map_coords[1]], 0, 1))
-        score = np.sum(self.grid.occupancy_map[map_coords[0], map_coords[1]])
-        # except IndexError:
-        #     # print("IndexError: map_coords", np.where(map_coords[0] > self.grid.x_max_map), np.where(map_coords[1] > self.grid.y_max_map))
-        #     score = -np.inf
-        # print("Score", score)
-        # input()
-        return score
 
     def get_corrected_pose(self, odom_pose, odom_pose_ref=None):
         """
@@ -82,20 +58,9 @@ class TinySlam:
 
         return np.array([x, y, t])
     
-    def _score(self, lidar, pose, last_obstacles):
-        if last_obstacles is None:
-            return -np.inf
-        def dist(x0, y0, x1, y1):
-            return np.sqrt((x0 - x1) ** 2 + (y0 - y1) ** 2)
-        
-        cur_obstacles = self.get_obstacles(lidar, pose)
-        error = 0
-        for i in range(len(cur_obstacles[0])):
-            error += dist(
-                cur_obstacles[0][i], cur_obstacles[1][i],
-                last_obstacles[0][i], last_obstacles[1][i]
-            )
-        return -error
+    def _score(self, lidar, pose):
+        obstacles_coords = self.get_obstacles(lidar, pose)
+        return np.sum(self.grid.occupancy_map[obstacles_coords[0], obstacles_coords[1]])
 
     def __score(self, pose, true_pose):
         pos_weight = 1
@@ -106,7 +71,7 @@ class TinySlam:
             theta_weight * np.abs(true_pose[2] - pose[2])
         )
 
-    def localise(self, lidar, raw_odom_pose, last_obstacles, true_pose):
+    def localise(self, lidar, raw_odom_pose):
         """
         Compute the robot position wrt the map, and updates the odometry reference
         lidar : placebot object with lidar data
@@ -114,66 +79,59 @@ class TinySlam:
         """
 
         best_score = -np.inf
-        # for _ in range(10):
-        # best_score = max(best_score, self._score(lidar, raw_odom_pose))
-        x_noise = 0.1
-        y_noise = 0.1
-        t_noise = 0.01
-        x_step = 0.002
-        y_step = 0.002
-        t_step = 0.0001
+        original_score = self._score(lidar, raw_odom_pose)
+        original_ref = self.odom_pose_ref.copy()
+        xy_var = 0.15
+        xy_size = 300
+        t_var = 0.01
+        t_size = 200
         
-        for dt in np.arange(-t_noise, t_noise, t_step):
+        for dt in np.random.normal(0, t_var, t_size):
             pose_ref = np.array([
                 self.odom_pose_ref[0],
                 self.odom_pose_ref[1],
                 self.odom_pose_ref[2] + dt
             ])
-            # score = self.get_obstacles(lidar, pose)
             new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
-            # print(new_corrected_pose)
-            score = self.__score(new_corrected_pose, true_pose)
+            score = self._score(lidar, new_corrected_pose)
             if score > best_score:
                 best_score = score
                 self.odom_pose_ref = pose_ref
-        print("Best angle", self.odom_pose_ref[2])
-        print("Corrected pose (angle adjusted)", self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref), true_pose)
+        # print("Best angle", self.odom_pose_ref[2])
+        # print("Corrected pose (angle adjusted)", self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref))
         
-        
-        for dx in np.arange(-x_noise, x_noise, x_step):
+        for dx in np.random.normal(0, xy_var, xy_size):
             pose_ref = np.array([
                 self.odom_pose_ref[0] + dx,
                 self.odom_pose_ref[1],
                 self.odom_pose_ref[2]
             ])
-            # score = self.get_obstacles(lidar, pose)
             new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
-            score = self.__score(new_corrected_pose, true_pose)
+            score = self._score(lidar, new_corrected_pose)
             if score > best_score:
                 best_score = score
                 self.odom_pose_ref = pose_ref
-        for dy in np.arange(-y_noise, y_noise, y_step):
+        for dy in np.random.normal(0, xy_var, xy_size):
             pose_ref = np.array([
                 self.odom_pose_ref[0],
                 self.odom_pose_ref[1] + dy,
                 self.odom_pose_ref[2]
             ])
-            # score = self.get_obstacles(lidar, pose)
             new_corrected_pose = self.get_corrected_pose(raw_odom_pose, pose_ref)
-            score = self.__score(new_corrected_pose, true_pose)
+            score = self._score(lidar, new_corrected_pose)
             if score > best_score:
                 best_score = score
                 self.odom_pose_ref = pose_ref
-        print("Best score", best_score)
-        print("Best pose ref", self.odom_pose_ref)
-        new_corrected_pose = self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref)
-        print("Best corrected pose", new_corrected_pose)
-            
+        # print("Best score", best_score)
+        # print("Best pose ref", self.odom_pose_ref)
+        # new_corrected_pose = self.get_corrected_pose(raw_odom_pose, self.odom_pose_ref)
+        # print("Best corrected pose", new_corrected_pose)
+        if best_score < original_score:
+            self.odom_pose_ref = original_ref
 
     def polar_to_cartesian(self, ranges, angles, pose):
         return np.array([pose[0] + ranges * np.cos(angles + pose[2]),
                          pose[1] + ranges * np.sin(angles + pose[2])])
-
 
     def update_map(self, lidar: Lidar, pose):
         """
@@ -221,99 +179,3 @@ class TinySlam:
             pt_x = ranges[i] * np.cos(ray_angles[i])
             pt_y = ranges[i] * np.sin(ray_angles[i])
             points.append([pt_x, pt_y])
-
-    def plan(self, start, goal, pose, _goal):
-        """
-        Plan a path from start to goal
-        start : [x, y] map coordinates
-        goal : [x, y] map coordinates
-        """
-        
-        class pq:
-            def __init__(self):
-                self.queue = []
-            
-            def push(self, item):
-                self.queue.append(item)
-            
-            def pop(self):
-                return self.queue.pop(self.queue.index(min(self.queue, key=lambda x: x[0])))
-            
-            def is_empty(self):
-                return len(self.queue) == 0
-            
-            def __len__(self):
-                return len(self.queue)
-        
-        def heuristic(a, b):
-            return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
-        
-        start = (start[0], start[1])
-        goal = (goal[0], goal[1])
-        
-        priority_queue = pq()
-        priority_queue.push((0, start))
-        visited = []
-        for _ in range(self.grid.x_max_map):
-            aux = []
-            for _ in range(self.grid.y_max_map):
-                aux.append(0)
-            visited.append(aux)
-        
-        came_from = {}
-        from collections import defaultdict
-        dist = defaultdict(lambda: np.inf)
-        dist[start] = 0
-        explored_x = []
-        explored_y = []
-        
-        print(start, goal)
-        while not priority_queue.is_empty():
-            u = priority_queue.pop()
-            if u[1] == goal:
-                print("Goal reached")
-                print("Path found")
-                break
-            if u[1] in visited:
-                continue
-            # print("Current node", u[1])
-            visited[u[1][0]][u[1][1]] = 1
-            explored_x.append(self.grid.conv_map_to_world(u[1][0], u[1][1])[0])
-            explored_y.append(self.grid.conv_map_to_world(u[1][0], u[1][1])[1])
-            # self.grid.display_cv(pose, _goal, np.array((explored_x, explored_y)))
-            
-            dx = [-1, 0, 1, 0, 1, -1, 1, -1]
-            dy = [0, -1, 0, 1, 1, -1, -1, 1]
-            obs_threshold = 0
-            for i in range(8):
-                v = (int(u[1][0] + dx[i]), int(u[1][1] + dy[i]))
-                # print("Next node", v)
-                # print(self.grid.occupancy_map[v[0]][v[1]])
-                if v[0] < 0 or v[0] >= self.grid.x_max_map or v[1] < 0 or v[1] >= self.grid.y_max_map:
-                    continue
-                if self.grid.occupancy_map[v[0]][v[1]] > obs_threshold: # obstacle
-                    continue
-                if not visited[v[0]][v[1]]:
-                    uv = 1 if (dx[i] == 0 or dy[i] == 0) else np.sqrt(2)
-                    if dist[u[1]] + uv < dist[v]:
-                        dist[v] = dist[u[1]] + uv
-                        priority_queue.push((dist[v] + heuristic(v, goal), v))
-                        
-                        came_from[v] = u[1]
-                
-        path = []
-        current = goal
-        while current != start:
-            path.append(self.grid.conv_map_to_world(current[0], current[1]))
-            current = came_from[current]
-        path.append(self.grid.conv_map_to_world(start[0], start[1]))
-        pathx = []
-        pathy = []
-        for i in range(len(path)):
-            pathx.append(path[i][0])
-            pathy.append(path[i][1])
-        path.reverse()
-        self.grid.display_cv(pose, _goal, np.array((pathx, pathy)))
-        print(len(path))
-        input()
-        return path

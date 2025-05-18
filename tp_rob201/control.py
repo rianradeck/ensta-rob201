@@ -86,14 +86,16 @@ def potential_field_control(lidar: Lidar, current_pose, goal_pose, grid):
     robot (x,y) frame (centered on robot, x forward, y on left) or in odom (centered / aligned
     on initial pose, x forward, y on left)
     """
-    # TODO for TP2
     
     vec_goal = goal_pose[:2]
     vec_rob = current_pose[:2]
-    beta = current_pose[2]
     
+    # Values from -pi to pi
     sensor_dists = lidar.get_sensor_values()
     sensor_angles = lidar.get_ray_angles()
+    fov = 360
+    sensor_angles = sensor_angles[180 - fov//2:180 + fov//2]
+    sensor_dists = sensor_dists[180 - fov//2:180 + fov//2]
 
     obstacles_vectors = []
     aux_obstacles_vectors = []
@@ -127,7 +129,6 @@ def potential_field_control(lidar: Lidar, current_pose, goal_pose, grid):
     for i in range(top_k):
         if i >= len(top_obstacles_vectors):
             break
-        print("top_obstacles_vectors", top_obstacles_vectors[i])
         dist = top_obstacles_vectors[i][0]
         resized_vec = top_obstacles_vectors[i][1] * dist / 2
         to_draw.append((resized_vec, (255, 0, 255)))
