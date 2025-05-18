@@ -188,7 +188,7 @@ class TinySlam:
         )
         
         thickness = 3
-        jitter = 1.5
+        jitter = 1
         
         for obstacle_x, obstacle_y in zip(obstacles[0], obstacles[1]):
             self.grid.add_value_along_line(pose[0], pose[1], obstacle_x, obstacle_y, -1)

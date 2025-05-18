@@ -86,11 +86,11 @@ class MyRobotSlam(RobotAbstract):
         Main control function with full SLAM, random exploration and path planning
         """
         goal = [-300,-400,0]
-        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        _corrected_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
+        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        corrected_pose = np.array((self.true_position()[0], self.true_position()[1], self.true_angle())) - self.original_pose
         # print("odometer pose", self.odometer_values())
         # print("reference pose", self.tiny_slam.odom_pose_ref)
-        print("corrected pose", corrected_pose, _corrected_pose)
+        # print("corrected pose", corrected_pose, _corrected_pose)
         # score = self.tiny_slam._score(self.lidar(), corrected_pose)
         # print("before update score", score)
         for _ in range(1):
@@ -98,53 +98,17 @@ class MyRobotSlam(RobotAbstract):
         
         # score = self.tiny_slam._score(self.lidar(), corrected_pose)
         
-        self.tiny_slam.localise(self.lidar(), self.odometer_values(), self.last_obstacles, _corrected_pose)
-        corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
-        print("pose after localise", corrected_pose, _corrected_pose)
+        # self.tiny_slam.localise(self.lidar(), self.odometer_values(), self.last_obstacles, _corrected_pose)
+        # corrected_pose = self.tiny_slam.get_corrected_pose(self.odometer_values())
+        # print("pose after localise", corrected_pose, _corrected_pose)
         
         # self.last_obstacles = self.tiny_slam.get_obstacles(self.lidar(), corrected_pose)
         # print("after update score", score)
         
-        if self.counter % 10 == 0:
-            self.tiny_slam.grid.display_cv(corrected_pose)
-        self.counter += 1
+        # if self.counter % 10 == 0:
+        #     self.tiny_slam.grid.display_cv(corrected_pose, goal=goal)
+        # self.counter += 1
 
-        if self.counter < 56:
-            return {
-                "forward": 0.0,
-                "rotation": 0.5
-            }
-        elif self.counter < 185:
-            return {
-                "forward": 0.4,
-                "rotation": 0.0
-            }
-        # elif self.counter < 200:
-        #     return {
-        #         "forward": 0.0,
-        #         "rotation": -0.5
-        #     }
-        # elif self.counter < 300:
-        #     return {
-        #         "forward": 0.5,
-        #         "rotation": 0.0
-        #     }
-        else:
-            # goal = (-200, 100)
-            # map_pose = self.occupancy_grid.conv_world_to_map(corrected_pose[0], corrected_pose[1])
-            # goal_map = self.occupancy_grid.conv_world_to_map(goal[0], goal[1])
-            # self.tiny_slam.plan(map_pose, goal_map, corrected_pose, goal)
-            return {
-                "forward": 0.0,
-                "rotation": 0
-            }
-
-        # return {
-        #     "forward": 0.0,
-        #     "rotation": 0.0
-        # }
-
-        # Compute new command speed to perform obstacle avoidance
         command = potential_field_control(self.lidar(), corrected_pose, goal, self.tiny_slam.grid)
 
         return command

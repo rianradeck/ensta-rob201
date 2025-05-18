@@ -159,7 +159,7 @@ class OccupancyGrid:
         # plt.show()
         plt.pause(0.001)
 
-    def display_cv(self, robot_pose, goal=None, traj=None):
+    def display_cv(self, robot_pose, goal=None, traj=None, vectors=None):
         """
         Screen display of map and robot pose,
         using opencv (faster than the matplotlib version)
@@ -189,6 +189,11 @@ class OccupancyGrid:
         pt2_x, pt2_y = self.conv_world_to_map(pt2_x, pt2_y)
 
         pt1_x, pt1_y = self.conv_world_to_map(robot_pose[0], robot_pose[1])
+
+        for vec, color in vectors:
+            cv2.arrowedLine(img=img_color, pt1=(int(pt1_x), self.y_max_map - int(pt1_y)),
+                            pt2=(int(vec[0]) + int(pt1_x), self.y_max_map - int(vec[1]) - int(pt1_y)),
+                            color=color, thickness=2)
 
         # print("robot_pose", robot_pose)
         pt1 = (int(pt1_x), self.y_max_map - int(pt1_y))

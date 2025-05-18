@@ -88,63 +88,80 @@ def potential_field_control(lidar: Lidar, current_pose, goal_pose, grid):
     """
     # TODO for TP2
     
-    
     vec_goal = goal_pose[:2]
     vec_rob = current_pose[:2]
-    
     beta = current_pose[2]
-    if beta < 0:
-        beta += 2 * np.pi
     
-    fov = 180
-    front_point = 180
     sensor_dists = lidar.get_sensor_values()
     sensor_angles = lidar.get_ray_angles()
-    obs_dist = np.min(sensor_dists[front_point - fov//2:front_point + fov//2])
-    idx_obs = np.where(sensor_dists == obs_dist)[0][0]
-    angle_obs = sensor_angles[idx_obs]
-    if angle_obs < 0:
-        angle_obs += 2 * np.pi
-    # print(idx_obs, obs_dist, tod(angle_obs))
-    # angle_obs = angle_difference(beta, angle_obs)
-    # vec_obs = np.array([vec_rob[0] + obs_dist * np.cos(angle_obs), vec_rob[1] + obs_dist * np.sin(angle_obs)])
-    vec_obs = polar_to_cartesian(obs_dist, angle_obs, current_pose)
-    # grid.display_cv(current_pose, goal=vec_obs)
-    # print("vec obs", vec_obs)
-    # print("vec rob", vec_rob)
-    vec_obs_to_rob = vec_obs - vec_rob
-    # print("vec obs - rob", vec_obs_to_rob)
-    # input()
-    obs_weight = 5e2 / obs_dist
-    if obs_dist > 100:
-        obs_weight = 0
-    
-    vec_res = vec_goal - vec_rob - obs_weight * vec_obs_to_rob
-    dist = np.linalg.norm(vec_res)
-    u_vec_res = vec_res / dist
-    u_vec_res = correct_precision(u_vec_res)
-    alpha = np.arctan2(u_vec_res[1], u_vec_res[0])
-    if alpha < 0:
-        alpha += 2 * np.pi
-    angle_diff = angle_difference(alpha, beta)
-    # print("res:", u_vec_res)
-    # print("beta:", tod(beta), "alpha:", tod(alpha))
-    # print(tod(angle_diff))
-    
 
-    eps = 0.01
-    rotation_factor = to_right(alpha, beta) * 0.2 / angle_diff
-    # if angle_diff > np.pi:
-    #     rotation_factor *= -1
-    if np.abs(angle_diff) > np.pi / 2:
-        return {"forward": 0,
-               "rotation": angle_diff * rotation_factor}
-    if np.linalg.norm(vec_rob - vec_goal) > 10:
-        return {"forward": min(0.5, dist),
-               "rotation": angle_diff * rotation_factor}
+    obstacles_vectors = []
+    aux_obstacles_vectors = []
+    for dist, angle in zip(sensor_dists, sensor_angles):
+        if dist > 100:
+            continue
+        obs_vec = polar_to_cartesian(dist, angle, current_pose)
+        obstacles_vectors.append(obs_vec)
+        unitary_vec = obs_vec - vec_rob
+        unitary_vec /= np.linalg.norm(unitary_vec)
+        aux_obstacles_vectors.append((dist, unitary_vec))
 
-    print("goal reached")
-    command = {"forward": 0,
-               "rotation": 0}
+    obstacles_vectors = np.array(obstacles_vectors)
+
+    obstacles_factor = 3e1
+    goal_factor = 2e4
+    res_vec = np.zeros(2)
+    for vec in obstacles_vectors:
+        res_vec -= obstacles_factor * (vec - vec_rob) / np.linalg.norm(vec - vec_rob)**2
+
+    res_vec += goal_factor * (vec_goal - vec_rob) / np.linalg.norm(vec_goal - vec_rob)**2
+
+    res_vec = correct_precision(res_vec)
+    norm_res_vec = np.linalg.norm(res_vec)
+    if norm_res_vec > 100: # limit res_vec norm
+        res_vec = res_vec / norm_res_vec * 100
+    print("res_vec", res_vec)
+    to_draw = [(res_vec, (0, 255, 0))]
+    top_obstacles_vectors = sorted(aux_obstacles_vectors, key=lambda x: x[0])
+    top_k = 3
+    for i in range(top_k):
+        if i >= len(top_obstacles_vectors):
+            break
+        print("top_obstacles_vectors", top_obstacles_vectors[i])
+        dist = top_obstacles_vectors[i][0]
+        resized_vec = top_obstacles_vectors[i][1] * dist / 2
+        to_draw.append((resized_vec, (255, 0, 255)))
+
+    grid.display_cv(current_pose, goal_pose, vectors=to_draw)
+
+    vec_angle = np.arctan2(res_vec[1], res_vec[0])
+    robot_angle = current_pose[2] 
+
+    vec_angle_deg = np.degrees(vec_angle)
+    robot_angle_deg = np.degrees(robot_angle)
+
+    angle_diff = vec_angle_deg - robot_angle_deg
+    angle_diff = (angle_diff + 180) % 360 - 180
+
+    # Threshold in degrees
+    threshold = 20
+    max_speed = 1.0
+    norm_res_vec = np.linalg.norm(res_vec)
+    dist_to_goal = np.linalg.norm(vec_goal - vec_rob)
+    if dist_to_goal < 10:
+        return {"forward": 0, "rotation": 0}
+    if dist_to_goal < 150:
+        threshold = 10
+        max_speed = 0.3
+    
+    if abs(angle_diff) < threshold:
+        forward = min(norm_res_vec * 0.03, max_speed)
+    else:
+        forward = 0.0
+    
+    # Rotation proportional to angle difference (scaled)
+    rotation = np.clip(angle_diff / 90, -1, 1)
+
+    command = {"forward": forward, "rotation": rotation}
 
     return command
